@@ -1,10 +1,5 @@
-# OK Select the Pascal view 
-# OK Hit the button to review senders and receivers
-# OK Analyze the parties 
-# OK Decide if there will be a reply based on the forbiden @s list (clients and standart vendors)
-# Fix the code flow to skip forbidden emails. I guess is that we have to separete the functions within the expand one and put them listed on the main() so that we ca break if the email domain is forbidden. 
-
 import time
+import datetime
 import logging
 import openai
 import gspread
@@ -28,7 +23,7 @@ import random  # If you still want typing simulation delays
 # ==============================
 
 # OpenAI API Key
-OPENAI_API_KEY = "The Key"
+OPENAI_API_KEY = "YOUR KEY"
 
 # Path to your Chrome user data directory
 chrome_user_data_dir = r"C:\\Users\\55199\\AppData\\Local\\Google\\Chrome\\User Data"
@@ -130,9 +125,10 @@ def is_email_forbidden(from_email):
     Checks if the extracted 'From' email contains any forbidden domains.
     """
     forbidden_domains = [
-        "@onfrontiers.com",   # Example of a forbidden domain
-        "@client.com",        # Add other forbidden domains here
-        "@vendor.com"         # Add more domains as needed
+        "@onfrontiers.com",
+        "@onfrontiers.co",   
+        "@client.com",        
+        "@vendor.com"         
     ]
 
     for domain in forbidden_domains:
@@ -251,16 +247,20 @@ def categorize_message(message_history):
         # Adjust the categorization logic based on the subjects provided in the table
         system_instructions = '''
         You are an assistant that categorizes messages into the following categories:
-        1. Technical issues or blockers
+        1. Technical issues, blockers, or payment issues
         2. Interested, not interested, or questions
+        Regardless of any information that might suggest category 2, always prioritize categorizing it as 1 if there is any mention, even a small one, to the category 1.
 
         Here are some examples to guide your categorization:
 
         Category 1:
+        - The expert is asking to share something with one of our clients
         - Login issues (The platform is not accepting email or phone number)
         - Technical problems (bugs) (Technical issues blocking expert from applying)
         - Rescheduling (Expert needs to reschedule a call ASAP or not)
         - Not getting paid (Expert didn't get paid yet)
+        - Claiming that completed an engagement but didn't get paid yet
+        - Experts sharing referrals
 
         Category 2:
         - Interested (Asking how to apply, Saying will apply soon, Will take a look and revert soon)
@@ -308,18 +308,34 @@ def generate_response(message_history, category_number):
         # Define category-specific reply instructions based on the table
         if category_number == "1":
             assistant_instructions = '''
-                You are a helpful assistant replying to an expert who is experiencing technical issues with our platform.
+                - You are writing a real message, not a template, write something that makes real sense.
+                - Don't be lazy; think it through and write something that really addresses the last message based on the context.
+                - Keep replies short, direct, and conversational.
+                - Don't sign emails, Don't add any name as a writter at the end of any email all the needed information is on the opportunity link, push them to take a look if they are seeking more information.
+                - Don't agree on having calls with experts, all the needed information is on the opportunity link, push them to take a look if they are seeking more information.
 
                 Instructions:
+                - If the expert is asking to share something with our clients, reply saing that we will get in touch with our client and will get back as soon as possible.
                 - For login issues or technical problems, request more details and a screenshot, and assure them our team will assist soon.
                 - For rescheduling requests, ask for more details about their availability.
-                - For payment delays, inform them that our finance team will be in touch and to check for emails from yzhang@onfrontiers.com.
+                - For delayed payments or experts that are claiming not receving payment, always advise them to check for any missed emails from yzhang@onfrontiers.com, and let us know if they are unable to locate it.
+                - For expert sharing referrals, thank them and inform that we will follow up as soon as possible.
+                - For experts that are asking us to delete their profile on our platform, inform that our techinical team will contact them soon.
             '''
         elif category_number == "2":
             assistant_instructions = '''
-                You are a helpful assistant replying to an expert with general inquiries or interest in a project.
+                - You are writing a real message, not a template, write something that makes real sense.
+                - Don't be lazy; think it through and write something that really addresses the last message based on the context.  
+                - You are inviting experts to apply to projects, not the other way around.
+                - Refer to the projects as "opportunities" and use the project link for invitations.
+                - Keep replies short, direct, and conversational.
+                - When sharing the project link, get it from the first message, don't try to embed links.
+                - Don't sign emails, Don't add any name as a writter at the end of any email all the needed information is on the opportunity link, push them to take a look if they are seeking more information.
+                - Don't agree on having calls with experts, all the needed information is on the opportunity link, push them to take a look if they are seeking more information.
 
                 Instructions:
+                - For experts asking about the payment process, inform that our finance team will contact them within 3 to 5 business days after the engagement is completed. Advise them to search for emails from yzhang@onfrontiers.com.
+                - For delayed payments or experts that are claiming not receving payment, please advise them to check for any missed emails from yzhang@onfrontiers.com, and let us know if they are unable to locate it.
                 - For interested experts (e.g., asking how to apply or saying will apply soon), provide the project link and encourage their application.
                 - For not interested experts, kindly ask for referrals and suggest they sign up as an expert for future opportunities.
                 - For questions about the client or conflict of interest, respond based on the details available in the project description or assure them they can check with their company.
@@ -337,7 +353,7 @@ def generate_response(message_history, category_number):
             model="gpt-4o",
             messages=messages,
             temperature=0,
-            max_tokens=500,
+            max_tokens=250,
             frequency_penalty=0,
             presence_penalty=0
         )
@@ -351,14 +367,24 @@ def generate_response(message_history, category_number):
 
 def log_message_to_sheet(worksheet, message_history, response_text, category_number, message_link):
     """
-    Logs the data to Google Sheets.
+    Logs the data to Google Sheets with the current date in column A,
+    and the other data in columns B, C, D, and E. Then, inserts a blank row afterward.
     """
     try:
+        # Get the current date and time
+        current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         # Prepare the data to be inserted
-        data_row = [category_number, message_link, message_history, response_text]
-        # Insert the data at the top of the sheet (row 1)
+        data_row = [current_date, category_number, message_link, message_history, response_text,]
+
+        # Insert the data at the top of the sheet (row 2), keeping the header in row 1
         worksheet.insert_row(data_row, 2)
-        logging.info("Data logged to Google Sheet.")
+        logging.info("Data with date logged to Google Sheet.")
+
+        # Insert a blank row after the added row (row 3)
+        #worksheet.insert_row([], 2)
+        #logging.info("Blank row inserted after the data row.")
+
     except Exception as e:
         logging.error(f"An error occurred while logging the data to the sheet: {e}")
 
@@ -423,12 +449,18 @@ def type_message_with_javascript(driver, message):
 def send_message():
     """
     Locate the send button and click it to send the message.
+    Uses a flexible selector to account for different label variations like 'Send to 2 people'.
     """
     try:
-        SEND_BUTTON_SELECTOR = "i18n-string[data-key='composer-ui.send-button.capabilities-editor-submit-button.send']" 
-
-        logging.info("Looking for the send button...")
-        send_button = wait_for_element(SEND_BUTTON_SELECTOR)
+        # Use a more flexible CSS selector that targets the "Send" button in different variations
+        SEND_BUTTON_SELECTOR = "button.uiButton.private-button--primary[data-button-use='primary']"
+        
+        logging.info("Looking for the send button with the flexible selector...")
+        
+        # Locate the send button
+        send_button = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, SEND_BUTTON_SELECTOR))
+        )
 
         if send_button:
             logging.info("Send button found. Clicking it to send the message.")
@@ -436,8 +468,11 @@ def send_message():
             time.sleep(2)  # Small delay to allow the message to send
         else:
             logging.warning("Send button not found.")
+    except TimeoutException:
+        logging.error("Timed out while trying to locate the send button.")
     except Exception as e:
         logging.error(f"Error while trying to send the message: {e}")
+
 
 def click_new_dropdown_item():
     try:
@@ -587,24 +622,24 @@ def main():
                         logging.info(response_text)
 
                         # Type the message into the message box
-                        #type_message_with_javascript(driver, response_text)
-                        #time.sleep(10)
+                        type_message_with_javascript(driver, response_text)
+                        time.sleep(6)
 
                         # Send the message
-                        #send_message()
+                        send_message()
 
                         # Log the data to Google Sheets
-                        #if worksheet:
-                        #    log_message_to_sheet(worksheet, message_history, response_text, category_number, driver.current_url)
+                        if worksheet:
+                            log_message_to_sheet(worksheet, message_history, response_text, category_number, driver.current_url)
                         #else:
-                        #    logging.warning("Worksheet not available; cannot log data.")
+                            logging.warning("Worksheet not available; cannot log data.")
                         
                         # Close the ticket
-                        #click_new_dropdown_item()
-                        #time.sleep(2)
+                        click_new_dropdown_item()
+                        time.sleep(2)
 
-                        #select_closed_option()
-                        #time.sleep(2)
+                        select_closed_option()
+                        time.sleep(10)
 
                     else:
                         logging.warning("Failed to generate a response.")
